@@ -1,132 +1,99 @@
-from rest_framework import generics, permissions, status, viewsets
-from rest_framework.response import Response
-from rest_framework.views import APIView
+from django.contrib.auth import authenticate, login
+from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
-from rest_framework.authtoken.views import ObtainAuthToken
-from rest_framework.decorators import action
-from django.contrib.auth import get_user_model, login, logout
-from django.shortcuts import get_object_or_404
-from django.db.models import Q
+from userApp.api.serializers import RegistrationSerializer, UserSerializer, AddressSerializer
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.decorators import api_view
+from userApp.models import Address
 
-from ..models import UserProfile, Pet, BookingRequest, Ad
-from .serializers import (
-    UserSerializer, UserProfileSerializer, PetSerializer, 
-    BookingRequestSerializer, AdSerializer, LoginSerializer
-)
+@api_view(['POST'])
+def regisgration_view(request):
+    """Registration API
+    Fields accepted: name, email, username, role(petsitter|normalUser), phone_number, pan(opt), aadhar(opt), password, password2
+    Rule: verified=false for petsitter; true for normalUser
+    Auto-login: returns auth token and user data
+    """
+    serializer = RegistrationSerializer(data=request.data)
+    if serializer.is_valid():
+        account = serializer.save()
+        # Auto-login using created credentials
+        user = authenticate(username=account.username, password=request.data.get('password'))
+        if user is not None:
+            login(request, user)
+        token, _ = Token.objects.get_or_create(user=account)
 
-User = get_user_model()
-
-class RegisterView(generics.CreateAPIView):
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
-    permission_classes = [permissions.AllowAny]
-
-class LoginView(ObtainAuthToken):
-    serializer_class = LoginSerializer
-    
-    def post(self, request, *args, **kwargs):
-        serializer = self.serializer_class(data=request.data, context={'request': request})
-        serializer.is_valid(raise_exception=True)
-        user = serializer.validated_data['user']
-        token, created = Token.objects.get_or_create(user=user)
-        user_serializer = UserSerializer(user)
-        return Response({
+        user_serializer = UserSerializer(account)
+        response_data = {
             'token': token.key,
-            'user': user_serializer.data
-        })
-
-class LogoutView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def post(self, request):
-        request.auth.delete()
-        return Response(status=status.HTTP_200_OK)
-
-class UserProfileView(generics.RetrieveUpdateAPIView):
-    queryset = UserProfile.objects.all()
-    serializer_class = UserProfileSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_object(self):
-        return self.request.user.profile
-
-class PetViewSet(viewsets.ModelViewSet):
-    serializer_class = PetSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        # Users can only see their own pets
-        return Pet.objects.filter(owner=self.request.user)
-    
-    def perform_create(self, serializer):
-        serializer.save(owner=self.request.user)
-
-class BookingRequestViewSet(viewsets.ModelViewSet):
-    serializer_class = BookingRequestSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        user = self.request.user
-        # Users can see booking requests they made or received
-        return BookingRequest.objects.filter(
-            Q(pet_owner=user) | Q(petsitter=user)
-        ).select_related('pet_owner', 'petsitter', 'pet')
-    
-    def perform_create(self, serializer):
-        serializer.save(pet_owner=self.request.user)
-    
-    @action(detail=True, methods=['post'])
-    def accept(self, request, pk=None):
-        booking = self.get_object()
-        if booking.petsitter != request.user:
-            return Response(
-                {"detail": "You do not have permission to accept this booking."},
-                status=status.HTTP_403_FORBIDDEN
-            )
+            **user_serializer.data
+        }
+        return Response(response_data, status=status.HTTP_201_CREATED)
+    else:
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+         
         
-        if booking.status != 'pending':
-            return Response(
-                {"detail": f"Cannot accept a booking that is {booking.get_status_display()}."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        booking.status = 'accepted'
-        booking.save()
-        serializer = self.get_serializer(booking)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['post'])
-    def reject(self, request, pk=None):
-        booking = self.get_object()
-        if booking.petsitter != request.user:
-            return Response(
-                {"detail": "You do not have permission to reject this booking."},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        if booking.status != 'pending':
-            return Response(
-                {"detail": f"Cannot reject a booking that is {booking.get_status_display()}."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        booking.status = 'rejected'
-        booking.save()
-        serializer = self.get_serializer(booking)
+@api_view(['POST'])
+def logout_view(request):
+    try:
+        request.user.auth_token.delete()
+        return Response({'message': 'Successfully logged out.'}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+def login_with_email(request):
+    """Login using email + password. Returns token and user data."""
+    email = request.data.get('email')
+    password = request.data.get('password')
+
+    if not email or not password:
+        return Response({'error': 'Please provide both email and password'}, status=status.HTTP_400_BAD_REQUEST)
+
+    User = get_user_model()
+    try:
+        user_obj = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return Response({'error': 'Invalid email or password'}, status=status.HTTP_400_BAD_REQUEST)
+    user = authenticate(username=user_obj.username, password=password)
+    if user is not None:
+        login(request, user)
+        token, _ = Token.objects.get_or_create(user=user)
+        serializer = UserSerializer(user)
+        response_data = {
+            'token': token.key,
+            **serializer.data
+        }
+        return Response(response_data)
+    else:
+        return Response({'error': 'Invalid email or password'}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET', 'POST'])
+def user_addresses(request, user_id: int):
+    """
+    GET: return list of addresses for the user_id
+    POST: create an address for the user_id from JSON body
+
+    Expected JSON fields: address, city, state, zipcode, latitude, longitude, country
+    """
+    if request.method == 'GET':
+        queryset = Address.objects.filter(user_id=user_id).order_by('-created_at')
+        serializer = AddressSerializer(queryset, many=True)
         return Response(serializer.data)
 
-class PetSitterListView(generics.ListAPIView):
-    serializer_class = UserSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        # Return all pet sitters with their profiles
-        return User.objects.filter(
-            role='petsitter',
-            profile__is_available=True
-        ).select_related('profile')
-
-class AdListView(generics.ListAPIView):
-    queryset = Ad.objects.filter(is_active=True)
-    serializer_class = AdSerializer
-    permission_classes = [permissions.AllowAny]
+    if request.method == 'POST':
+        data = request.data.copy()
+        serializer = AddressSerializer(data=data)
+        if serializer.is_valid():
+            addr = Address.objects.create(
+                user_id=user_id,
+                address=serializer.validated_data.get('address', ''),
+                city=serializer.validated_data.get('city', ''),
+                state=serializer.validated_data.get('state', ''),
+                zipcode=serializer.validated_data.get('zipcode', ''),
+                latitude=serializer.validated_data.get('latitude', None),
+                longitude=serializer.validated_data.get('longitude', None),
+                country=serializer.validated_data.get('country', ''),
+            )
+            return Response(AddressSerializer(addr).data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

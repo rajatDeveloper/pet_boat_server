@@ -8,7 +8,8 @@ urlpatterns = [
     # User App APIs
     path('api/user/', include('userApp.api.urls')),
     # Main App APIs
-    # path('api/', include('mainApp.api.urls')),
+    path('api/main/', include('mainApp.urls')),
+  
 ]
 
 if settings.DEBUG:

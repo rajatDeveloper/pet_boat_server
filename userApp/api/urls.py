@@ -1,26 +1,15 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from . import views
 
-router = DefaultRouter()
-router.register(r'pets', views.PetViewSet, basename='pet')
-router.register(r'booking-requests', views.BookingRequestViewSet, basename='booking-request')
+from django.urls import path , include
+from userApp.api.views import (
+    regisgration_view,
+    logout_view,
+    login_with_email,
+    user_addresses,
+)
 
 urlpatterns = [
-    # Authentication
-    path('register/', views.RegisterView.as_view(), name='register'),
-    path('login/', views.LoginView.as_view(), name='login'),
-    path('logout/', views.LogoutView.as_view(), name='logout'),
-    
-    # User Profile
-    path('profile/', views.UserProfileView.as_view(), name='profile'),
-    
-    # Petsitters
-    path('petsitters/', views.PetSitterListView.as_view(), name='petsitter-list'),
-    
-    # Ads
-    path('ads/', views.AdListView.as_view(), name='ad-list'),
-    
-    # Include router URLs
-    path('', include(router.urls)),
+    path('login-email/' , login_with_email , name='login-email'),
+    path('register/' , regisgration_view , name='register') , 
+    path('logout/' , logout_view , name='logout'),
+    path('users/<int:user_id>/addresses/', user_addresses, name='user-addresses'),
 ]
